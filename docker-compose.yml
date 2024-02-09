@@ -1,0 +1,95 @@
+# Use postgres/example user/password credentials
+version: "3.1"
+
+services:
+  adminer:
+    container_name: adminer
+    image: adminer
+    restart: always
+    ports:
+      - 8080:8080
+    profiles:
+      - debug
+
+  ### Prefect Database
+  prefect-db:
+    container_name: prefect-db
+    image: postgres:15.2-alpine
+    restart: always
+    environment:
+      - POSTGRES_USER=${POSTGRES_USER}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+      - POSTGRES_DB=${POSTGRES_DB}
+    expose:
+      - 5432
+    volumes:
+      - db:/var/lib/postgresql/data
+
+  ### MinIO for flow storage
+  minio:
+    container_name: minio
+    image: minio/minio:latest
+    environment:
+      - MINIO_ROOT_USER=${MINIO_ROOT_USER}
+      - MINIO_ROOT_PASSWORD=${MINIO_ROOT_PASSWORD}
+    entrypoint:
+      [
+        "minio",
+        "server",
+        "--address",
+        "0.0.0.0:${MINIO_PORT}",
+        "--console-address",
+        "0.0.0.0:${MINIO_UI_PORT}",
+        "/data",
+      ]
+    volumes:
+      - "minio:/data"
+    ports:
+      - ${MINIO_PORT}:${MINIO_PORT}
+      - ${MINIO_UI_PORT}:${MINIO_UI_PORT}
+    profiles: ["minio"]
+
+  ### Prefect Server API and UI
+  prefect-server:
+    container_name: prefect-server
+    image: prefecthq/prefect:2.13.4-python3.11
+    restart: always
+    volumes:
+      - prefect:/root/.prefect
+    entrypoint: ["/opt/prefect/entrypoint.sh", "prefect", "server", "start"]
+    environment:
+      - PREFECT_UI_URL=http://127.0.0.1:4200/api
+      - PREFECT_API_URL=http://127.0.0.1:4200/api
+      # If you want to access Prefect Server UI from anywhere other than the Docker host machine, you will need to change
+      # PREFECT_UI_URL and PREFECT_API_URL to match the external hostname/IP of the host machine. For example:
+      #- PREFECT_UI_URL=http://external-ip:4200/api
+      #- PREFECT_API_URL=http://external-ip:4200/api
+      - PREFECT_SERVER_API_HOST=0.0.0.0
+      - PREFECT_API_DATABASE_CONNECTION_URL=postgresql+asyncpg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@prefect-db:5432/${POSTGRES_DB}
+      # Uncomment the following line if you want to use the 'S3 Bucket' storage block instead of the older 'S3' storage
+      # - EXTRA_PIP_PACKAGES=prefect-aws
+    ports:
+      - 4200:4200
+    depends_on:
+      - prefect-db
+
+  prefect-executor:
+    container_name: prefect-executor
+    build: .
+    # volumes:
+      # - ./:/app
+    environment:
+      - PREFECT_API_URL=http://prefect-server:4200/api
+      - MINIO_ACCESS_KEY=${MINIO_ACCESS_KEY}
+      - MINIO_SECRET_KEY=${MINIO_SECRET_KEY}
+    #       Use PREFECT_API_KEY to use the CLI to interact with Prefect Cloud
+    #     - PREFECT_API_KEY=YOUR_API_KEY
+    depends_on:
+      - prefect-server
+
+volumes:
+  prefect:
+  db:
+  minio:
+
+
